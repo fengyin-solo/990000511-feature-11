@@ -92,6 +92,7 @@ The seed script creates a demo user with a sample board "My Project" containing 
 - `PUT /api/cards/:id` - Update card
 - `DELETE /api/cards/:id` - Delete card
 - `PUT /api/cards/:id/move` - Move card to another column
+- `POST /api/cards/batch-move` - Move multiple cards to one column in one request (`{ cardIds, targetColumnId, position? }`; returns per-card success/failure results)
 
 ## Features
 
@@ -100,5 +101,6 @@ The seed script creates a demo user with a sample board "My Project" containing 
 - Add, rename, and delete columns
 - Create cards with title, description, priority (low/medium/high), and due date
 - Drag and drop cards between columns
+- Multi-select cards (checkbox mode) and batch-move them, with drag preview of the target column and drop position and a per-card success/failure result dialog
 - Drag and drop to reorder columns
 - Responsive design with Element Plus UI

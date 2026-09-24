@@ -162,6 +162,122 @@ router.delete('/cards/:id', (req, res) => {
   }
 });
 
+// POST /api/cards/batch-move - Move multiple cards to another column in one request
+// Body: { cardIds: number[], targetColumnId: number, position?: number }
+// Responds 404 when the target column itself is missing/unauthorized, otherwise
+// 200 with a per-card results array (a single failing card never blocks the others).
+router.post('/cards/batch-move', (req, res) => {
+  const { cardIds, targetColumnId, position } = req.body;
+
+  if (!Array.isArray(cardIds) || cardIds.length === 0) {
+    return res.status(400).json({ error: 'cardIds must be a non-empty array' });
+  }
+  if (!targetColumnId) {
+    return res.status(400).json({ error: 'Target column ID is required' });
+  }
+  if (cardIds.length > 100) {
+    return res.status(400).json({ error: 'Cannot move more than 100 cards at once' });
+  }
+
+  const db = getDb();
+  try {
+    // The target column must exist, belong to the requesting user and be reachable.
+    const targetCol = db.prepare(`
+      SELECT col.*, b.user_id FROM columns col
+      JOIN boards b ON col.board_id = b.id
+      WHERE col.id = ?
+    `).get(targetColumnId);
+
+    if (!targetCol || targetCol.user_id !== req.user.id) {
+      db.close();
+      return res.status(404).json({ error: 'Target column not found' });
+    }
+
+    // De-duplicate requested ids while preserving first-seen order.
+    const uniqueIds = [...new Set(cardIds.map(Number).filter(Number.isInteger))];
+
+    // Verify every card up-front: it must exist, belong to the user, and live on
+    // the same board as the target column. Invalid cards are reported per-item.
+    const resultById = new Map();
+    const movable = [];
+    for (const id of uniqueIds) {
+      const card = getCardWithOwnership(db, id, req.user.id);
+      if (!card || card.user_id !== req.user.id) {
+        resultById.set(id, { card_id: id, success: false, error: 'Card not found' });
+      } else if (card.board_id !== targetCol.board_id) {
+        resultById.set(id, { card_id: id, success: false, error: 'Card is not on the same board' });
+      } else {
+        movable.push(card);
+      }
+    }
+
+    const txn = db.transaction(() => {
+      // Phase 1: remove every movable card from its current column, shifting the
+      // cards behind it down. Cards already in the target column are removed too,
+      // so the requested insertion index is interpreted against a column state
+      // that contains none of the selected cards.
+      const removed = [];
+      for (const card of movable) {
+        const current = db.prepare('SELECT * FROM cards WHERE id = ?').get(card.id);
+        if (!current) {
+          resultById.set(card.id, { card_id: card.id, success: false, error: 'Card not found' });
+          continue;
+        }
+        db.prepare(`
+          UPDATE cards SET position = position - 1
+          WHERE column_id = ? AND position > ?
+        `).run(current.column_id, current.position);
+        removed.push(current);
+      }
+
+      // Phase 2: insert at the requested base index in the submitted order.
+      const maxPos = db.prepare(
+        'SELECT MAX(position) AS maxPos FROM cards WHERE column_id = ?'
+      ).get(targetColumnId);
+      let insertAt = position !== undefined && !Number.isNaN(Number(position))
+        ? Math.max(0, Math.min(Number(position), (maxPos.maxPos ?? -1) + 1))
+        : (maxPos.maxPos ?? -1) + 1;
+
+      for (const card of removed) {
+        db.prepare(`
+          UPDATE cards SET position = position + 1
+          WHERE column_id = ? AND position >= ?
+        `).run(targetColumnId, insertAt);
+        db.prepare(`
+          UPDATE cards SET column_id = ?, position = ?, updated_at = datetime('now')
+          WHERE id = ?
+        `).run(targetColumnId, insertAt, card.id);
+        resultById.set(card.id, { card_id: card.id, success: true, position: insertAt });
+        insertAt += 1;
+      }
+    });
+
+    txn();
+
+    // Attach the authoritative updated card rows for successful moves, keeping
+    // the result array in the caller's submitted order.
+    const results = uniqueIds.map((id) => {
+      const result = resultById.get(id);
+      if (result && result.success) {
+        result.card = db.prepare('SELECT * FROM cards WHERE id = ?').get(id);
+      }
+      return result;
+    });
+
+    db.close();
+    const succeeded = results.filter(r => r.success).length;
+    res.json({
+      target_column_id: targetColumnId,
+      succeeded,
+      failed: results.length - succeeded,
+      results
+    });
+  } catch (err) {
+    db.close();
+    res.status(500).json({ error: 'Failed to batch move cards' });
+  }
+});
+
 // PUT /api/cards/:id/move - Move card to another column
 router.put('/cards/:id/move', (req, res) => {
   const { columnId, position } = req.body;

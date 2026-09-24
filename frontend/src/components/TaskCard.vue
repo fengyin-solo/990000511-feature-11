@@ -1,8 +1,20 @@
 <template>
-  <el-card class="task-card" shadow="hover" @click="$emit('edit', card)">
+  <el-card
+    class="task-card"
+    :class="{ selected: isSelected, 'select-mode': selectionMode }"
+    shadow="hover"
+    @click="handleCardClick"
+  >
     <div class="task-card-content">
       <div class="task-card-top">
-        <el-tag :type="priorityType" size="small" effect="dark" class="priority-tag">
+        <el-checkbox
+          v-if="selectionMode"
+          :model-value="isSelected"
+          class="select-checkbox"
+          @change="$emit('toggle-select', card.id)"
+          @click.stop
+        />
+        <el-tag v-else :type="priorityType" size="small" effect="dark" class="priority-tag">
           {{ card.priority }}
         </el-tag>
         <el-dropdown trigger="click" @command="handleCommand" @click.stop>
@@ -55,10 +67,12 @@ import { MoreFilled, Calendar } from '@element-plus/icons-vue'
 
 const props = defineProps({
   card: { type: Object, required: true },
-  allColumns: { type: Array, default: () => [] }
+  allColumns: { type: Array, default: () => [] },
+  selectionMode: { type: Boolean, default: false },
+  isSelected: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['edit', 'delete', 'move'])
+const emit = defineEmits(['edit', 'delete', 'move', 'toggle-select', 'card-drag-start'])
 
 const showMoveDialog = ref(false)
 const targetColumnId = ref(null)
@@ -87,6 +101,14 @@ function formatDate(dateStr) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
+function handleCardClick() {
+  if (props.selectionMode) {
+    emit('toggle-select', props.card.id)
+  } else {
+    emit('edit', props.card)
+  }
+}
+
 function handleCommand(command) {
   if (command === 'edit') {
     emit('edit', props.card)
@@ -110,11 +132,21 @@ function confirmMove() {
 .task-card {
   margin-bottom: 8px;
   cursor: pointer;
-  transition: transform 0.15s;
+  transition: transform 0.15s, border-color 0.15s;
 }
 
 .task-card:hover {
   transform: translateY(-2px);
+}
+
+.task-card.selected {
+  border-color: #409eff;
+  box-shadow: 0 0 0 1px #409eff;
+}
+
+.task-card.select-mode :deep(.el-card__body) {
+  padding-top: 10px;
+  padding-bottom: 10px;
 }
 
 .task-card :deep(.el-card__body) {
@@ -126,6 +158,10 @@ function confirmMove() {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 8px;
+}
+
+.select-checkbox {
+  margin-right: auto;
 }
 
 .priority-tag {

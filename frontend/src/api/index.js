@@ -54,7 +54,9 @@ export const cardApi = {
   create: (columnId, data) => api.post(`/columns/${columnId}/cards`, data),
   update: (id, data) => api.put(`/cards/${id}`, data),
   delete: (id) => api.delete(`/cards/${id}`),
-  move: (id, columnId, position) => api.put(`/cards/${id}/move`, { columnId, position })
+  move: (id, columnId, position) => api.put(`/cards/${id}/move`, { columnId, position }),
+  batchMove: (cardIds, targetColumnId, position) =>
+    api.post('/cards/batch-move', { cardIds, targetColumnId, position })
 }
 
 export default api
