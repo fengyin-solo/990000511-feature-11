@@ -1,33 +1,46 @@
 <template>
-  <el-card class="task-card" shadow="hover" @click="$emit('edit', card)">
+  <el-card
+    class="task-card"
+    :class="{ selected: selectable && selected }"
+    shadow="hover"
+    @click="$emit('edit', card)"
+  >
     <div class="task-card-content">
-      <div class="task-card-top">
-        <el-tag :type="priorityType" size="small" effect="dark" class="priority-tag">
-          {{ card.priority }}
-        </el-tag>
-        <el-dropdown trigger="click" @command="handleCommand" @click.stop>
-          <el-button text size="small" :icon="MoreFilled" @click.stop />
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="edit">Edit Details</el-dropdown-item>
-              <el-dropdown-item v-if="otherColumns.length > 0" command="move">
-                Move to...
-              </el-dropdown-item>
-              <el-dropdown-item command="delete" divided>
-                Delete
-              </el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
+      <div v-if="selectable" class="task-card-select" @click.stop>
+        <el-checkbox
+          :model-value="selected"
+          @change="$emit('toggle-select', card.id)"
+        />
       </div>
+      <div class="task-card-main">
+        <div class="task-card-top">
+          <el-tag :type="priorityType" size="small" effect="dark" class="priority-tag">
+            {{ card.priority }}
+          </el-tag>
+          <el-dropdown trigger="click" @command="handleCommand" @click.stop>
+            <el-button text size="small" :icon="MoreFilled" @click.stop />
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="edit">Edit Details</el-dropdown-item>
+                <el-dropdown-item v-if="otherColumns.length > 0" command="move">
+                  Move to...
+                </el-dropdown-item>
+                <el-dropdown-item command="delete" divided>
+                  Delete
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
 
-      <h4 class="task-title">{{ card.title }}</h4>
+        <h4 class="task-title">{{ card.title }}</h4>
 
-      <p v-if="card.description" class="task-desc">{{ card.description }}</p>
+        <p v-if="card.description" class="task-desc">{{ card.description }}</p>
 
-      <div v-if="card.due_date" class="task-due">
-        <el-icon><Calendar /></el-icon>
-        <span :class="{ overdue: isOverdue }">{{ formatDate(card.due_date) }}</span>
+        <div v-if="card.due_date" class="task-due">
+          <el-icon><Calendar /></el-icon>
+          <span :class="{ overdue: isOverdue }">{{ formatDate(card.due_date) }}</span>
+        </div>
       </div>
     </div>
 
@@ -55,10 +68,12 @@ import { MoreFilled, Calendar } from '@element-plus/icons-vue'
 
 const props = defineProps({
   card: { type: Object, required: true },
-  allColumns: { type: Array, default: () => [] }
+  allColumns: { type: Array, default: () => [] },
+  selectable: { type: Boolean, default: false },
+  selected: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['edit', 'delete', 'move'])
+const emit = defineEmits(['edit', 'delete', 'move', 'toggle-select'])
 
 const showMoveDialog = ref(false)
 const targetColumnId = ref(null)
@@ -111,6 +126,27 @@ function confirmMove() {
   margin-bottom: 8px;
   cursor: pointer;
   transition: transform 0.15s;
+}
+
+.task-card.selected {
+  outline: 2px solid #409eff;
+}
+
+.task-card-content {
+  display: flex;
+  gap: 8px;
+}
+
+.task-card-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.task-card-select {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  padding-top: 2px;
 }
 
 .task-card:hover {

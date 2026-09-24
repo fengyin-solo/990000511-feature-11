@@ -1,6 +1,13 @@
 <template>
   <div class="column">
     <div class="column-header">
+      <div v-if="selectMode" class="column-select" @click.stop>
+        <el-checkbox
+          :model-value="allSelected"
+          :indeterminate="someSelected"
+          @change="toggleSelectAll"
+        />
+      </div>
       <div v-if="!isEditing" class="column-title" @dblclick="startEditing">
         <h3>{{ column.name }}</h3>
         <el-tag size="small" round>{{ cards.length }}</el-tag>
@@ -32,15 +39,19 @@
         group="cards"
         ghost-class="card-ghost"
         animation="200"
+        :disabled="selectMode"
         @end="onCardDragEnd"
       >
         <template #item="{ element: card }">
           <TaskCard
             :card="card"
             :all-columns="allColumns"
+            :selectable="selectMode"
+            :selected="selectedIds.includes(card.id)"
             @edit="$emit('edit-card', card)"
             @delete="$emit('delete-card', card)"
             @move="(targetColId) => $emit('move-card', card.id, targetColId, 0)"
+            @toggle-select="(cardId) => $emit('toggle-select', cardId)"
           />
         </template>
       </draggable>
@@ -55,23 +66,36 @@
 </template>
 
 <script setup>
-import { ref, nextTick } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import { MoreFilled, Plus } from '@element-plus/icons-vue'
 import draggable from 'vuedraggable'
 import TaskCard from './TaskCard.vue'
-import { cardApi } from '../api/index.js'
 
 const props = defineProps({
   column: { type: Object, required: true },
   cards: { type: Array, default: () => [] },
-  allColumns: { type: Array, default: () => [] }
+  allColumns: { type: Array, default: () => [] },
+  selectMode: { type: Boolean, default: false },
+  selectedIds: { type: Array, default: () => [] }
 })
 
-const emit = defineEmits(['add-card', 'edit-card', 'delete-card', 'move-card', 'rename-column', 'delete-column'])
+const emit = defineEmits(['add-card', 'edit-card', 'delete-card', 'move-card', 'rename-column', 'delete-column', 'toggle-select', 'select-column', 'card-drag-move'])
 
 const isEditing = ref(false)
 const editName = ref('')
 const editInputRef = ref(null)
+
+const allSelected = computed(() =>
+  props.cards.length > 0 && props.cards.every(c => props.selectedIds.includes(c.id))
+)
+
+const someSelected = computed(() =>
+  !allSelected.value && props.cards.some(c => props.selectedIds.includes(c.id))
+)
+
+function toggleSelectAll() {
+  emit('select-column', props.column.id, !allSelected.value)
+}
 
 function startEditing() {
   editName.value = props.column.name
@@ -96,25 +120,15 @@ function handleCommand(command) {
   }
 }
 
-async function onCardDragEnd(evt) {
+function onCardDragEnd(evt) {
   const cardId = evt.item?.__draggable_context?.element?.id
-  const toColumnId = props.column.id
-  
-  // Find source column
-  const fromContext = evt.from.__draggable_context
-  const toContext = evt.to.__draggable_context
-  
   if (!cardId) return
-  
-  const newIndex = evt.newIndex
-  
-  // If moved to a different column, update via API
+
+  // Cross-column drag: let the parent persist it through the store so the
+  // local state is reconciled (no snap-back, no duplicated cards).
+  // Same-column reorder keeps the original behavior (no server call).
   if (evt.from !== evt.to) {
-    try {
-      await cardApi.move(cardId, toColumnId, newIndex)
-    } catch (err) {
-      // Refresh would be needed here, but the store handles it
-    }
+    emit('card-drag-move', cardId, props.column.id, evt.newIndex)
   }
 }
 </script>
@@ -135,6 +149,11 @@ async function onCardDragEnd(evt) {
   justify-content: space-between;
   align-items: center;
   padding: 12px 12px 8px;
+}
+
+.column-select {
+  flex-shrink: 0;
+  margin-right: 4px;
 }
 
 .column-title {

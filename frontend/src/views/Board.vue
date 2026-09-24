@@ -6,6 +6,8 @@
         <h2 v-if="boardStore.currentBoard">{{ boardStore.currentBoard.name }}</h2>
       </div>
       <div class="board-actions">
+        <el-button v-if="!selectMode" :icon="Check" @click="selectMode = true">Select Cards</el-button>
+        <el-button v-else type="success" plain :icon="Check" @click="exitSelectMode">Done</el-button>
         <el-button type="primary" :icon="Plus" @click="showAddColumn = true">
           Add Column
         </el-button>
@@ -31,16 +33,55 @@
             :column="column"
             :cards="boardStore.cards[column.id] || []"
             :all-columns="boardStore.columns"
+            :select-mode="selectMode"
+            :selected-ids="boardStore.selectedCardIds"
             @add-card="handleAddCard"
             @edit-card="openCardDetail"
             @delete-card="confirmDeleteCard"
             @move-card="handleMoveCard"
             @rename-column="handleRenameColumn"
             @delete-column="confirmDeleteColumn"
+            @toggle-select="onToggleSelect"
+            @select-column="onSelectColumn"
+            @card-drag-move="handleDragMoveCard"
           />
         </template>
       </draggable>
     </div>
+
+    <!-- Batch action bar (multi-select mode) -->
+    <transition name="slide-up">
+      <div v-if="selectMode" class="batch-bar">
+        <div class="batch-bar-info">
+          <el-checkbox
+            :model-value="allCardsSelected"
+            :indeterminate="someCardsSelected"
+            @change="toggleSelectAll"
+          />
+          <span class="batch-count">{{ boardStore.selectedCardIds.length }} selected</span>
+        </div>
+        <div class="batch-bar-actions">
+          <el-button
+            type="primary"
+            :icon="Position"
+            :disabled="boardStore.selectedCardIds.length === 0"
+            @click="showBatchMove = true"
+          >
+            Batch Move
+          </el-button>
+          <el-button :icon="Close" @click="exitSelectMode">Cancel</el-button>
+        </div>
+      </div>
+    </transition>
+
+    <!-- Entry point to multi-select mode is in the board header -->
+
+    <!-- Batch Move Dialog -->
+    <BatchMoveDialog
+      v-model:visible="showBatchMove"
+      :all-columns="boardStore.columns"
+      @moved="onBatchMoved"
+    />
 
     <!-- Add Column Dialog -->
     <el-dialog v-model="showAddColumn" title="Add Column" width="400px" :close-on-click-modal="false">
@@ -74,16 +115,17 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, ArrowLeft, Loading } from '@element-plus/icons-vue'
+import { Plus, ArrowLeft, Loading, Check, Position, Close } from '@element-plus/icons-vue'
 import draggable from 'vuedraggable'
 import { useBoardStore } from '../stores/board.js'
 import { columnApi } from '../api/index.js'
 import Column from '../components/Column.vue'
 import AddCardForm from '../components/AddCardForm.vue'
 import CardDetail from '../components/CardDetail.vue'
+import BatchMoveDialog from '../components/BatchMoveDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -95,6 +137,51 @@ const showAddCard = ref(false)
 const addingToColumnId = ref(null)
 const showCardDetail = ref(false)
 const selectedCard = ref(null)
+
+// Multi-select / batch move state
+const selectMode = ref(false)
+const showBatchMove = ref(false)
+
+const allCardCount = computed(() =>
+  boardStore.columns.reduce((sum, col) => sum + (boardStore.cards[col.id] || []).length, 0)
+)
+
+const allCardsSelected = computed(() =>
+  allCardCount.value > 0 && boardStore.selectedCardIds.length === allCardCount.value
+)
+
+const someCardsSelected = computed(() =>
+  boardStore.selectedCardIds.length > 0 && !allCardsSelected.value
+)
+
+function onToggleSelect(cardId) {
+  boardStore.toggleCardSelection(cardId)
+}
+
+function onSelectColumn(columnId, select) {
+  const ids = new Set(boardStore.selectedCardIds)
+  for (const card of boardStore.cards[columnId] || []) {
+    if (select) ids.add(card.id)
+    else ids.delete(card.id)
+  }
+  boardStore.setSelected([...ids])
+}
+
+function toggleSelectAll() {
+  if (allCardsSelected.value) {
+    boardStore.clearSelection()
+  } else {
+    const all = boardStore.columns.flatMap(col =>
+      (boardStore.cards[col.id] || []).map(card => card.id)
+    )
+    boardStore.setSelected(all)
+  }
+}
+
+function exitSelectMode() {
+  selectMode.value = false
+  boardStore.clearSelection()
+}
 
 onMounted(async () => {
   const boardId = parseInt(route.params.id)
@@ -172,7 +259,31 @@ async function handleMoveCard(cardId, targetColumnId, position) {
     await boardStore.moveCard(cardId, targetColumnId, position)
     ElMessage.success('Card moved')
   } catch (err) {
-    ElMessage.error('Failed to move card')
+    ElMessage.error(err?.response?.data?.error || 'Failed to move card')
+  }
+}
+
+// Cross-column drag from a Column component: persisted via the (queued) store
+// action; the store reconciles local state from the server on failure.
+async function handleDragMoveCard(cardId, targetColumnId, position) {
+  try {
+    await boardStore.moveCard(cardId, targetColumnId, position)
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.error || 'Failed to move card')
+  }
+}
+
+// Batch dialog finished: show the per-card outcome summary. Positions shown
+// in the dialog already come from the server's last successful results.
+function onBatchMoved(results) {
+  const failed = results.filter(r => !r.success).length
+  const succeeded = results.length - failed
+  if (failed === 0) {
+    ElMessage.success(`Moved ${succeeded} card(s)`)
+  } else if (succeeded === 0) {
+    ElMessage.error('No cards were moved')
+  } else {
+    ElMessage.warning(`${succeeded} moved, ${failed} failed`)
   }
 }
 
@@ -275,5 +386,42 @@ async function onColumnDragEnd(evt) {
 
 .loading-state p {
   margin-top: 12px;
+}
+
+.batch-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+  padding: 10px 16px;
+  z-index: 100;
+}
+
+.batch-bar-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.batch-count {
+  font-size: 13px;
+  color: #606266;
+}
+
+.slide-up-enter-active,
+.slide-up-leave-active {
+  transition: all 0.2s ease;
+}
+
+.slide-up-enter-from,
+.slide-up-leave-to {
+  opacity: 0;
+  transform: translate(-50%, 16px);
 }
 </style>
